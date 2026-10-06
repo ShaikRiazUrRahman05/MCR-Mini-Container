@@ -1,6 +1,6 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-int escribir_en_archivo(const char *ruta, const char *contenido);
+int write_to_file(const char *path, const char *content);
 
 #endif

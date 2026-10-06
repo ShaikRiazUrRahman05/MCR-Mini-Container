@@ -9,88 +9,103 @@
 #include <sys/types.h>
 #include <errno.h>
 
-int crear_cgroup(char *nombre, pid_t pid, char *mem_max, char *cpu_max, char *pids_max) {
-    char ruta[256];
-    (void)nombre;
-    
-    printf("Creando estructura de cgroups para PID %d...\n", pid);
+int create_cgroup(char *name, pid_t pid, char *mem_max, char *cpu_max, char *pids_max) {
+    char path[256];
+    (void)name;
 
-    // ANTES de crear /minicr, habilitar en el root
-escribir_en_archivo("/sys/fs/cgroup/cgroup.subtree_control", "+memory +pids +cpu");
+    printf("Creating cgroup structure for PID %d...\n", pid);
 
-// luego crear el padre
-mkdir("/sys/fs/cgroup/minicr", 0755);
+    // BEFORE creating /minicr, enable controllers at the root
+    write_to_file("/sys/fs/cgroup/cgroup.subtree_control", "+memory +pids +cpu");
 
-// luego habilitar en el padre
-escribir_en_archivo("/sys/fs/cgroup/minicr/cgroup.subtree_control", "+memory +pids +cpu");
-    
-    // 0. Crear cgroup padre (nuestra propia jerarquía)
-    const char *cgroup_padre = "/sys/fs/cgroup/minicr";
-    
-    if (mkdir(cgroup_padre, 0755) == -1) {
+    // Then create the parent
+    mkdir("/sys/fs/cgroup/minicr", 0755);
+
+    // Then enable controllers in the parent
+    write_to_file("/sys/fs/cgroup/minicr/cgroup.subtree_control",
+                  "+memory +pids +cpu");
+
+    // 0. Create parent cgroup (our own hierarchy)
+    const char *parent_cgroup = "/sys/fs/cgroup/minicr";
+
+    if (mkdir(parent_cgroup, 0755) == -1) {
         if (errno != EEXIST) {
-            perror("mkdir del cgroup padre falló");
+            perror("Failed to create parent cgroup");
             return 1;
         }
-        printf("Cgroup padre ya existe, continuando...\n");
+        printf("Parent cgroup already exists, continuing...\n");
     }
-    
-    // 1. Habilitar controladores en el padre
-    printf("Habilitando controladores en cgroup padre...\n");
-    escribir_en_archivo("/sys/fs/cgroup/minicr/cgroup.subtree_control", 
-                        "+memory +pids +cpu");
-    
-    // 2. Crear el directorio del cgroup hijo
-    snprintf(ruta, sizeof(ruta), "/sys/fs/cgroup/minicr/mcr-%d", pid);
-    printf("Creando cgroup hijo: %s\n", ruta);
-    if (mkdir(ruta, 0755) == -1) {
+
+    // 1. Enable controllers in the parent
+    printf("Enabling controllers in parent cgroup...\n");
+    write_to_file("/sys/fs/cgroup/minicr/cgroup.subtree_control",
+                  "+memory +pids +cpu");
+
+    // 2. Create the child cgroup directory
+    snprintf(path, sizeof(path), "/sys/fs/cgroup/minicr/mcr-%d", pid);
+    printf("Creating child cgroup: %s\n", path);
+
+    if (mkdir(path, 0755) == -1) {
         if (errno != EEXIST) {
-            perror("mkdir del cgroup hijo falló");
+            perror("Failed to create child cgroup");
             return 1;
         }
     }
-    
-    // 3. Configurar límite de memoria
+
+    // 3. Configure memory limit
     if (mem_max != NULL) {
-        snprintf(ruta, sizeof(ruta), "/sys/fs/cgroup/minicr/mcr-%d/memory.max", pid);
-        printf("Configurando limite de memoria: %s\n", mem_max);
-        if (access(ruta, W_OK) == 0)
-            escribir_en_archivo(ruta, mem_max);
+        snprintf(path, sizeof(path),
+                 "/sys/fs/cgroup/minicr/mcr-%d/memory.max", pid);
+        printf("Setting memory limit: %s\n", mem_max);
+
+        if (access(path, W_OK) == 0)
+            write_to_file(path, mem_max);
     }
-    
-    // 4. Configurar límite de CPU
+
+    // 4. Configure CPU limit
     if (cpu_max != NULL) {
-        snprintf(ruta, sizeof(ruta), "/sys/fs/cgroup/minicr/mcr-%d/cpu.max", pid);
-        printf("Configurando limite de CPU: %s\n", cpu_max);
-        if (access(ruta, W_OK) == 0)
-            escribir_en_archivo(ruta, cpu_max);
+        snprintf(path, sizeof(path),
+                 "/sys/fs/cgroup/minicr/mcr-%d/cpu.max", pid);
+        printf("Setting CPU limit: %s\n", cpu_max);
+
+        if (access(path, W_OK) == 0)
+            write_to_file(path, cpu_max);
     }
-    
-    // 5. Configurar límite de procesos
+
+    // 5. Configure process limit
     if (pids_max != NULL) {
-        snprintf(ruta, sizeof(ruta), "/sys/fs/cgroup/minicr/mcr-%d/pids.max", pid);
-        printf("Configurando limite de PIDs: %s\n", pids_max);
-        if (access(ruta, W_OK) == 0)
-            escribir_en_archivo(ruta, pids_max);
+        snprintf(path, sizeof(path),
+                 "/sys/fs/cgroup/minicr/mcr-%d/pids.max", pid);
+        printf("Setting PID limit: %s\n", pids_max);
+
+        if (access(path, W_OK) == 0)
+            write_to_file(path, pids_max);
     }
-    
-    // 6. Agregar el proceso al cgroup
-    snprintf(ruta, sizeof(ruta), "/sys/fs/cgroup/minicr/mcr-%d/cgroup.procs", pid);
-    printf("Agregando PID %d al cgroup...\n", pid);
+
+    // 6. Add the process to the cgroup
+    snprintf(path, sizeof(path),
+             "/sys/fs/cgroup/minicr/mcr-%d/cgroup.procs", pid);
+
+    printf("Adding PID %d to cgroup...\n", pid);
+
     char pid_str[32];
     snprintf(pid_str, sizeof(pid_str), "%d\n", pid);
 
-    escribir_en_archivo(ruta, pid_str);
-    
+    write_to_file(path, pid_str);
+
     return 0;
 }
 
-int eliminar_cgroup(pid_t pid) {
-    char ruta[256];
-    snprintf(ruta, sizeof(ruta), "/sys/fs/cgroup/minicr/mcr-%d", pid);
-    if (rmdir(ruta) == -1) {
-        perror("Error al eliminar cgroup");
+int delete_cgroup(pid_t pid) {
+    char path[256];
+
+    snprintf(path, sizeof(path),
+             "/sys/fs/cgroup/minicr/mcr-%d", pid);
+
+    if (rmdir(path) == -1) {
+        perror("Failed to delete cgroup");
         return 1;
     }
+
     return 0;
 }

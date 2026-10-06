@@ -1,20 +1,20 @@
-# Binario
+# Binary
 mcr
 
-# Objetos compilados
+# Compiled objects
 build/
 
-# Rootfs de Alpine (demasiado grande y es de terceros)
+# Alpine rootfs (too large and third-party)
 alpine/
 alpine-minirootfs-*.tar.gz
 
 # Runtime artifacts
 old_root/
 
-# Archivos de editor
+# Editor files
 .vscode/
 *.swp
 
-# Proyectos separados
+# Separate projects
 3d projecto/
 projecto 1/

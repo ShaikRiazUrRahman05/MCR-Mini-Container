@@ -26,7 +26,7 @@ run_test() {
 echo "=== MCR integration tests ==="
 echo ""
 
-# El binario existe
+# The binary exists
 echo "[1] Binary"
 if [[ -x "$MCR" ]]; then
     echo "  [PASS] mcr binary exists and is executable"
@@ -39,34 +39,34 @@ fi
 echo ""
 echo "[2] Isolation"
 
-# El contenedor ve UID 0 (user namespace activo)
+# The container sees UID 0 (user namespace active)
 run_test "UID is 0 inside container" "uid=0" id
 
-# El hostname dentro del contenedor es "mcr"
+# The hostname inside the container is "mcr"
 run_test "hostname is 'mcr'" "mcr" hostname
 
-# El rootfs es Alpine (busybox está en /bin)
+# The rootfs is Alpine (busybox is in /bin)
 run_test "rootfs is Alpine" "busybox" ls /bin
 
 echo ""
 echo "[3] Basic execution"
 
-# echo funciona
+# echo works
 run_test "echo works" "hello" /bin/echo hello
 
-# sh puede ejecutar un comando inline
+# sh can execute an inline command
 run_test "sh -c works" "ok" /bin/sh -c "echo ok"
 
-# pwd dentro del contenedor es /
+# pwd inside the container is /
 run_test "working dir is /" "/" pwd
 
 echo ""
 echo "[4] Filesystem isolation"
 
-# /proc está montado
+# /proc is mounted
 run_test "/proc is mounted" "proc" sh -c "mount | grep proc"
 
-# /tmp existe
+# /tmp exists
 run_test "/tmp is mounted" "tmp" sh -c "ls / | grep tmp"
 
 echo ""

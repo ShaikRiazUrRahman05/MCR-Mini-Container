@@ -1,6 +1,6 @@
 #ifndef SECCOMP_H
 #define SECCOMP_H
 
-int cargar_filtro_seccomp(void);
+int load_seccomp_filter(void);
 
 #endif

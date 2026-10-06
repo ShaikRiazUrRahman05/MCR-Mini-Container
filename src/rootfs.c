@@ -16,39 +16,45 @@ int setup_rootfs(char *rootfs) {
     char abs_rootfs[PATH_MAX];
 
     if (realpath(rootfs, abs_rootfs) == NULL) {
-        perror("realpath falló");
+        perror("realpath failed");
         return 1;
     }
 
-    // 1. Aislar el namespace de mounts del host (puede fallar en user namespaces, no es fatal)
+    // 1. Isolate the mount namespace from the host
+    //    (may fail in user namespaces, not fatal)
     mount(NULL, "/", NULL, MS_PRIVATE | MS_REC, NULL);
 
-    // 2. Bind mount de /dev del host en el nuevo rootfs ANTES de pivot/chroot
-    //    mount() no necesita permiso de escritura en el directorio destino, solo CAP_SYS_ADMIN
+    // 2. Bind mount the host's /dev into the new rootfs BEFORE pivot/chroot
+    //    mount() does not require write permission on the destination directory,
+    //    only CAP_SYS_ADMIN
     {
         char dev_path[PATH_MAX + 8];
+
         snprintf(dev_path, sizeof(dev_path), "%s/dev", abs_rootfs);
-        mkdir(dev_path, 0755);  // puede fallar si ya existe, está bien
+        mkdir(dev_path, 0755);  // May fail if it already exists, which is fine
+
         if (mount("/dev", dev_path, NULL, MS_BIND | MS_REC, NULL) == 0)
             mount(NULL, dev_path, NULL, MS_PRIVATE | MS_REC, NULL);
     }
 
-    // 3. Bind mount del nuevo rootfs sobre sí mismo (necesario para pivot_root)
+    // 3. Bind mount the new rootfs onto itself (required for pivot_root)
     if (mount(abs_rootfs, abs_rootfs, NULL, MS_BIND | MS_REC, NULL) == -1) {
-        perror("bind mount falló");
+        perror("bind mount failed");
         return 1;
     }
 
-    // 4. Refrescar CWD al tope del bind mount
+    // 4. Refresh CWD to the top of the bind mount
     if (chdir(abs_rootfs) == -1) {
-        perror("chdir post-bind falló");
+        perror("chdir after bind mount failed");
         return 1;
     }
 
-    // 5. Intentar pivot_root
-    //    Si el rootfs es de root y corremos sin sudo, mkdir("old_root") falla
-    //    con EACCES dentro del user namespace → usamos chroot como fallback
+    // 5. Try pivot_root
+    //    If the rootfs belongs to root and we are running without sudo,
+    //    mkdir("old_root") fails with EACCES inside the user namespace.
+    //    Use chroot as a fallback.
     int pivot_ok = 0;
+
     if (mkdir("old_root", 0755) == 0) {
         if (syscall(SYS_pivot_root, ".", "old_root") == 0) {
             pivot_ok = 1;
@@ -61,17 +67,19 @@ int setup_rootfs(char *rootfs) {
     }
 
     if (!pivot_ok) {
-        // Fallback: chroot (funciona con CAP_SYS_CHROOT en user namespace)
+        // Fallback: chroot (works with CAP_SYS_CHROOT in a user namespace)
         if (chroot(abs_rootfs) == -1) {
-            perror("chroot falló");
+            perror("chroot failed");
             return 1;
         }
+
         chdir("/");
     }
 
-    // 6. Montar sistemas de archivos virtuales
+    // 6. Mount virtual filesystems
     mount("proc", "/proc", "proc", 0, NULL);
     mount("sysfs", "/sys", "sysfs", 0, NULL);
+
     mkdir("/tmp", 0755);
     mount("tmpfs", "/tmp", "tmpfs", 0, NULL);
 

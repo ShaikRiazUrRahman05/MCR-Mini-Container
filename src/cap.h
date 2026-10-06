@@ -1,6 +1,6 @@
 #ifndef CAP_H
 #define CAP_H
 
-int reducir_capabilities(void);
+int reduce_capabilities(void);
 
 #endif

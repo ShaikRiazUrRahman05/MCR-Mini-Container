@@ -1,145 +1,182 @@
-# Por qué el contenedor moría silenciosamente
+# Why the Container Was Dying Silently
 
-## El síntoma
+## The Symptom
 
+```text
+Adding PID 123884 to the cgroup...
+
+Removing cgroup for PID 123884...   ← immediate, no shell
 ```
-Agregando PID 123884 al cgroup...
-Eliminando cgroup para PID 123884...   ← inmediato, sin shell
-```
 
-El cgroup se creaba y se eliminaba al instante. Nunca aparecía el prompt `/ #`.
+The cgroup was being created and removed almost immediately. The `/ #` prompt never appeared.
 
 ---
 
-## Diagnóstico por capas
+## Layer-by-Layer Diagnosis
 
-### Capa 1 — ¿Era el cgroup?
+### Layer 1 — Was it the cgroup?
 
-No. El cgroup se eliminaba *después* de `waitpid()`, que es lo correcto.
-El problema era que `waitpid()` retornaba inmediatamente porque el hijo ya había muerto.
+No. The cgroup was being removed _after_ `waitpid()`, which is the correct behavior.
 
-### Capa 2 — ¿Moría antes de exec?
+The problem was that `waitpid()` was returning immediately because the child process had already died.
 
-Se probó con `/bin/echo "hola"` y `/bin/sh -c "echo dentro"`.
-Ambos funcionaron. Conclusión: el problema era específico del shell **interactivo**.
+### Layer 2 — Was the process dying before `exec`?
 
-### Capa 3 — ¿Era falta de TTY?
+This was tested with `/bin/echo "hello"` and `/bin/sh -c "echo inside"`.
 
-Sí, en parte. Sin PTY, `ash` detecta que no tiene terminal controlante y sale inmediatamente.
-**Solución parcial:** implementar PTY con `posix_openpt` + relay padre↔hijo.
+Both worked. Conclusion: the problem was specific to the **interactive shell**.
 
-Pero después de implementar el PTY, el shell seguía muriendo.
+### Layer 3 — Was it the lack of a TTY?
 
-### Capa 4 — ¿Era seccomp?
+Yes, partially. Without a PTY, `ash` detects that it does not have a controlling terminal and exits immediately.
 
-Aquí estaba el bug real. El orden en `container_main` era:
+**Partial solution:** implement a PTY using `posix_openpt` + a parent↔child relay.
+
+But even after implementing the PTY, the shell was still dying.
+
+### Layer 4 — Was it seccomp?
+
+This was the real bug. The order in `container_main` was:
 
 ```c
-// ORDEN INCORRECTO
-cargar_filtro_seccomp();   // filtro activo
-setsid();                  // ← __NR_setsid NO estaba en la whitelist → SIGSYS → muerto
+// INCORRECT ORDER
+
+load_seccomp_filter();   // filter active
+
+setsid();                // ← __NR_setsid was NOT in the whitelist → SIGSYS → dead
+
 ioctl(TIOCSCTTY, ...);
+
 execvp("/bin/sh", ...);
 ```
 
-`SECCOMP_RET_KILL` mata el proceso sin mensaje, sin señal catcheable, sin log visible.
-El hijo moría antes de llegar a `execvp`.
+`SECCOMP_RET_KILL` kills the process without a message, without a catchable signal, and without a visible log.
 
-**Primera corrección:** mover `setsid()` y la configuración del PTY **antes** de aplicar seccomp.
+The child was dying before it could reach `execvp`.
 
-Pero el shell seguía muriendo.
+**First fix:** move `setsid()` and the PTY setup **before** applying seccomp.
 
-### Capa 5 — Syscalls que faltaban en la whitelist
+But the shell was still dying.
 
-Con el orden corregido, `ash` llegaba a ejecutarse pero moría durante su inicialización.
-Los syscalls que `ash` necesita al arrancar y que **no estaban en el filtro**:
+### Layer 5 — Missing syscalls in the whitelist
 
-| Syscall | Nº | Para qué lo usa ash |
-|---|---|---|
-| `getpgid` | 121 | Job control: obtener process group de un PID |
-| `getsid` | 124 | Verificar la sesión actual |
-| `getresuid` | 118 | Leer UID real/efectivo/saved |
-| `getresgid` | 120 | Leer GID real/efectivo/saved |
-| `sigaltstack` | 131 | Stack alternativo para señales (libc startup) |
-| `statx` | 332 | Versión moderna de `stat` usada por musl en kernels 4.11+ |
+After fixing the order, `ash` was able to start executing but died during its initialization.
 
----
+The syscalls that `ash` needs during startup and that were **missing from the filter** were:
 
-## Por qué era tan difícil de detectar
-
-### 1. `SECCOMP_RET_KILL` no deja rastro visible
-
-Cuando seccomp bloquea un syscall con `SECCOMP_RET_KILL`:
-- El proceso muere con SIGSYS
-- No hay mensaje en stderr
-- No hay core dump por defecto
-- El padre solo ve que el hijo salió (exit code por señal)
-- No se imprime "execvp no chilve" porque el proceso muere antes o durante `execvp`
-
-### 2. El PTY ocultaba la salida de error
-
-Después de `dup2(slave_fd, STDERR_FILENO)`, cualquier error del hijo iba al PTY esclavo.
-El relay del padre (`relay_pty`) no empezaba hasta después de `crear_cgroup` (~50ms).
-Para entonces el hijo ya estaba muerto y el buffer del PTY se perdía con el HUP.
-
-### 3. Los tests parciales funcionaban
-
-`/bin/echo` y `/bin/sh -c "echo"` pasaban seccomp porque son comandos no-interactivos:
-- No llaman `setpgid`/`getpgid` para job control
-- No configuran terminal
-- No leen archivos de perfil
-Solo `ash` interactivo activa toda la inicialización que usa los syscalls bloqueados.
-
-### 4. El bug tenía dos causas independientes encadenadas
-
-```
-Sin PTY  → ash sale inmediatamente (sin error visible)
-Con PTY  → ash muere por seccomp    (sin error visible)
-```
-
-Resolver el PTY sin saber del seccomp hacía que el comportamiento externo fuese idéntico,
-lo que dificultaba saber si se había avanzado.
+| Syscall       | No. | What `ash` uses it for                                 |
+| ------------- | --: | ------------------------------------------------------ |
+| `getpgid`     | 121 | Job control: obtaining the process group of a PID      |
+| `getsid`      | 124 | Checking the current session                           |
+| `getresuid`   | 118 | Reading real/effective/saved UID                       |
+| `getresgid`   | 120 | Reading real/effective/saved GID                       |
+| `sigaltstack` | 131 | Alternate signal stack (libc startup)                  |
+| `statx`       | 332 | Modern version of `stat` used by musl on kernels 4.11+ |
 
 ---
 
-## La solución final
+## Why Was It So Difficult to Detect?
 
-### En `ns.c` — orden correcto en `container_main`
+### 1. `SECCOMP_RET_KILL` Leaves No Visible Trace
+
+When seccomp blocks a syscall with `SECCOMP_RET_KILL`:
+
+- The process dies with `SIGSYS`.
+- There is no message on stderr.
+- There is no core dump by default.
+- The parent only sees that the child exited due to a signal.
+- `"execvp no child"` is never printed because the process dies before or during `execvp`.
+
+### 2. The PTY Was Hiding the Error Output
+
+After:
+
+```c
+dup2(slave_fd, STDERR_FILENO);
+```
+
+any error from the child was redirected to the PTY slave.
+
+The parent's `relay_pty` did not start until after `create_cgroup` (~50 ms).
+
+By that time, the child had already died, and the buffered PTY output was lost when the HUP occurred.
+
+### 3. The Partial Tests Were Working
+
+`/bin/echo` and `/bin/sh -c "echo"` passed through seccomp because they are non-interactive commands:
+
+- They do not call `setpgid`/`getpgid` for job control.
+- They do not configure a terminal.
+- They do not read shell profile files.
+
+Only interactive `ash` activates the full initialization sequence that uses the blocked syscalls.
+
+### 4. The Bug Had Two Independent, Chained Causes
+
+```text
+Without PTY  → ash exits immediately (no visible error)
+
+With PTY     → ash dies because of seccomp (no visible error)
+```
+
+Fixing the PTY without knowing about the seccomp issue made the external behavior look identical, which made it difficult to determine whether progress had actually been made.
+
+---
+
+## The Final Solution
+
+### In `ns.c` — Correct Order in `container_main`
 
 ```c
 sethostname("mcr", 3);
+
 setup_rootfs(args->rootfs);
 
-setsid();                          // 1. nueva sesión
-ioctl(args->slave_fd, TIOCSCTTY);  // 2. asignar TTY controlante
+setsid();                          // 1. Create a new session
+
+ioctl(args->slave_fd, TIOCSCTTY);  // 2. Assign the controlling TTY
+
 dup2(args->slave_fd, STDIN_FILENO);
+
 dup2(args->slave_fd, STDOUT_FILENO);
+
 dup2(args->slave_fd, STDERR_FILENO);
 
-cargar_filtro_seccomp();           // 3. seccomp AL FINAL, después del setup
+load_seccomp_filter();             // 3. Apply seccomp LAST, after setup
+
 execvp(args->argv[0], args->argv);
 ```
 
-### En `seccomp.c` — ampliar la whitelist
+### In `seccomp.c` — Expand the Whitelist
 
-Añadir los syscalls que `ash` y `musl` necesitan al arrancar:
+Add the syscalls that `ash` and `musl` need during startup:
 
 ```c
 ALLOW_SYSCALL(__NR_setpgid),
+
 ALLOW_SYSCALL(__NR_getpgrp),
+
 ALLOW_SYSCALL(__NR_getpgid),
+
 ALLOW_SYSCALL(__NR_getsid),
+
 ALLOW_SYSCALL(__NR_setsid),
+
 ALLOW_SYSCALL(__NR_getresuid),
+
 ALLOW_SYSCALL(__NR_getresgid),
+
 ALLOW_SYSCALL(__NR_sigaltstack),
+
 ALLOW_SYSCALL(__NR_statx),
 ```
 
 ---
 
-## Resultado
+## Result
 
-```
+```text
 / #
 ```
+
+The interactive shell now starts successfully.

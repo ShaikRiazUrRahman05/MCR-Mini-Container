@@ -44,6 +44,7 @@ tar xf alpine-minirootfs-3.19.0-x86_64.tar.gz -C alpine/
 ```
 
 > If the rootfs was previously extracted with `sudo` (files owned by root), fix the root directory ownership:
+>
 > ```bash
 > sudo chown $(whoami) ./alpine
 > ```
@@ -90,16 +91,16 @@ config/       — example configuration
 
 ## Security model
 
-| Mechanism | What it restricts |
-|---|---|
-| User namespace | Maps host UID to container UID 0 without real root |
-| Mount namespace | Container cannot see or affect host mounts |
-| PID namespace | Container cannot see host processes |
-| Network namespace | Isolated network stack |
-| Seccomp BPF | Kills the process on any non-whitelisted syscall |
-| Capability drop | Removes dangerous capabilities before exec |
-| `setrlimit` | Hard 128 MB virtual memory cap (rootless) |
-| cgroups v2 | Memory, CPU, and PID limits (root only) |
+| Mechanism         | What it restricts                                  |
+| ----------------- | -------------------------------------------------- |
+| User namespace    | Maps host UID to container UID 0 without real root |
+| Mount namespace   | Container cannot see or affect host mounts         |
+| PID namespace     | Container cannot see host processes                |
+| Network namespace | Isolated network stack                             |
+| Seccomp BPF       | Kills the process on any non-whitelisted syscall   |
+| Capability drop   | Removes dangerous capabilities before exec         |
+| `setrlimit`       | Hard 128 MB virtual memory cap (rootless)          |
+| cgroups v2        | Memory, CPU, and PID limits (root only)            |
 
 ## Testing
 
@@ -150,12 +151,11 @@ A full account of every bug found and fixed during development is documented in 
 
 Summary:
 
-| Bug | File | Fix |
-|---|---|---|
-| Child stack overflow (silent crash) | `src/ns.c` | `malloc(8192)` → `malloc(65536)`, and `stack + 8192` → `stack + 65536` in `clone()` |
-| `seccomp` failing with `EACCES` in user namespace | `src/seccomp.c` | Added `prctl(PR_SET_NO_NEW_PRIVS, 1, ...)` before loading the filter |
-| `MS_PRIVATE` abort cutting rootfs setup short | `src/rootfs.c` | Removed `return 1` — failure is non-fatal in user namespaces |
-| `pivot_root` always skipped | `src/rootfs.c` | Added `chroot` fallback; fixed by extracting rootfs without `sudo` |
-| `reducir_capabilities` killed by seccomp | `src/ns.c` | Moved capability drop to before seccomp load — seccomp must always be last |
-| `setrlimit` code placed at global scope | `src/cgroup.c` | Moved into `container_main` in `src/ns.c` where it belongs |
-
+| Bug                                               | File            | Fix                                                                                 |
+| ------------------------------------------------- | --------------- | ----------------------------------------------------------------------------------- |
+| Child stack overflow (silent crash)               | `src/ns.c`      | `malloc(8192)` → `malloc(65536)`, and `stack + 8192` → `stack + 65536` in `clone()` |
+| `seccomp` failing with `EACCES` in user namespace | `src/seccomp.c` | Added `prctl(PR_SET_NO_NEW_PRIVS, 1, ...)` before loading the filter                |
+| `MS_PRIVATE` abort cutting rootfs setup short     | `src/rootfs.c`  | Removed `return 1` — failure is non-fatal in user namespaces                        |
+| `pivot_root` always skipped                       | `src/rootfs.c`  | Added `chroot` fallback; fixed by extracting rootfs without `sudo`                  |
+| `reducir_capabilities` killed by seccomp          | `src/ns.c`      | Moved capability drop to before seccomp load — seccomp must always be last          |
+| `setrlimit` code placed at global scope           | `src/cgroup.c`  | Moved into `container_main` in `src/ns.c` where it belongs                          |

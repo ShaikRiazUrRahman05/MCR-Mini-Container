@@ -1,16 +1,16 @@
 #define _GNU_SOURCE
 #include <stdio.h>
-#include <stddef.h>      
-#include <sys/prctl.h>   
-#include <linux/seccomp.h> 
-#include <linux/filter.h>  
-#include <linux/audit.h>   
-#include <asm/unistd.h>   
-#include <errno.h>        
+#include <stddef.h>
+#include <sys/prctl.h>
+#include <linux/seccomp.h>
+#include <linux/filter.h>
+#include <linux/audit.h>
+#include <asm/unistd.h>
+#include <errno.h>
 #include "seccomp.h"
 
 // -------------------------------------------------------
-// MACROS BPF
+// BPF MACROS
 // -------------------------------------------------------
 #define VALIDATE_ARCH \
     BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offsetof(struct seccomp_data, arch))), \
@@ -28,9 +28,9 @@
     BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL)
 
 // -------------------------------------------------------
-// FILTRO COMPLETO (syscalls necesarias para shell)
+// COMPLETE FILTER (syscalls required for a shell)
 // -------------------------------------------------------
-static struct sock_filter filtro[] = {
+static struct sock_filter filter[] = {
     VALIDATE_ARCH,
     LOAD_SYSCALL_NR,
 
@@ -168,7 +168,7 @@ static struct sock_filter filtro[] = {
     ALLOW_SYSCALL(__NR_epoll_wait),
     ALLOW_SYSCALL(__NR_epoll_pwait),
 
-    /* --- Misc --- */
+    /* --- Miscellaneous --- */
     ALLOW_SYSCALL(__NR_uname),
     ALLOW_SYSCALL(__NR_prctl),
     ALLOW_SYSCALL(__NR_arch_prctl),
@@ -187,12 +187,12 @@ static struct sock_filter filtro[] = {
 };
 
 // -------------------------------------------------------
-// FUNCIÓN PRINCIPAL
+// MAIN FUNCTION
 // -------------------------------------------------------
-int cargar_filtro_seccomp(void) {
+int load_seccomp_filter(void) {
     struct sock_fprog prog = {
-        .len = (unsigned short)(sizeof(filtro) / sizeof(filtro[0])),
-        .filter = filtro,
+        .len = (unsigned short)(sizeof(filter) / sizeof(filter[0])),
+        .filter = filter,
     };
 
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1) {
@@ -204,5 +204,6 @@ int cargar_filtro_seccomp(void) {
         perror("prctl(PR_SET_SECCOMP)");
         return 1;
     }
+
     return 0;
 }

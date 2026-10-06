@@ -5,18 +5,20 @@
 #include <string.h>
 #include <unistd.h>
 
-int escribir_en_archivo(const char *ruta, const char *contenido) {
-    int fd = open(ruta, O_WRONLY);
+int write_to_file(const char *path, const char *content) {
+    int fd = open(path, O_WRONLY);
+
     if (fd == -1) {
-        perror("Error al abrir");
-        printf("  -> Ruta: %s\n", ruta);
+        perror("Error opening file");
+        printf("  -> Path: %s\n", path);
         return 1;
     }
 
-    ssize_t bytes_escritos = write(fd, contenido, strlen(contenido));
-    if (bytes_escritos == -1) {
-        perror("Error al escribir");
-        printf("  -> Ruta: %s, Contenido: %s\n", ruta, contenido);
+    ssize_t bytes_written = write(fd, content, strlen(content));
+
+    if (bytes_written == -1) {
+        perror("Error writing to file");
+        printf("  -> Path: %s, Content: %s\n", path, content);
         close(fd);
         return 1;
     }
